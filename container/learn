@@ -1,0 +1,296 @@
+在线学习站
+https://www.katacoda.com
+
+01###部署第一个容器
+docker search redis
+docker run -d redis
+docker ps
+docker run -d --name redisHostPort -p 6379:6379 redis:latest	//暴露端口
+docker run -d --name redisDynamic -p 6379 redis:latest	//动态暴露端口
+docker port redisDynamic 6379	//获取动态暴露的端口
+docker ps
+docker run -d --name redisMapped -v /opt/docker/data/redis:/data redis	//挂载目录
+docker run ubuntu ps
+docker run -it ubuntu bash
+
+02###署名静态HTML网站
+
+Dockerfile
+---------------------------------
+FROM nginx:alpine
+COPY . /usr/share/nginx/html    //将当前目录下的内容复制到容器目录中
+---------------------------------
+docker build -t webserver-image:v1 .
+docker images
+docker run -d -p 80:80 webserver-image:v1
+curl docker
+
+03###Dockerfile编写
+
+Dockerfile
+-----------------------------------------------------
+FROM nginx:1.11-alpine
+COPY index.html /usr/share/nginx/html/index.html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]    //nginx的启动命令默认是nginx -g daemon off
+docker build -t my-nginx-image:latest .
+-----------------------------------------------------
+docker run -d -p 80:80 my-nginx-image:latest
+curl -i http://docker
+
+04###将Node.js部署为应用
+
+Dockerfile
+-----------------------------------------------------
+FROM node:7-alpine
+RUN mkdir -p /src/app
+WORKDIR /src/app
+COPY package.json /src/app/package.json
+RUN npm install
+COPY . /src/app
+EXPOSE 3000
+CMD [ "npm", "start" ]
+-----------------------------------------------------
+docker build -t my-nodejs-app .
+docker run -d --name my-running-app -p 3000:3000 my-nodejs-app
+$ curl http://docker:3000
+docker run -d --name my-production-running-app -e NODE_ENV=production -p 3000:3000 my-nodejs-app
+
+05###使用OnBuild优化Dockerfile
+
+Dockerfile
+-----------------------------------------------------
+FROM node:7-onbuild
+EXPOSE 3000
+-----------------------------------------------------
+docker build -t my-nodejs-app .
+docker run -d --name my-running-app -p 3000:3000 my-nodejs-app
+$ curl http://docker:3000
+
+06###使用.dockerignore忽略文件
+
+echo passwords.txt >> .dockerignore
+docker build -t nopassword .
+docker run nopassword ls /app
+
+07###数据容器
+
+#数据容器负责存储和管理数据
+#数据容器不会处于运行状态
+
+docker create -v /config --name dataContainer busybox     //-v选项定义其它容器将读写数据的位置
+docker cp config.conf dataContainer:/config/
+docker run --volumes-from dataContainer ubuntu ls /config    //--volumes-from指定使用某容器的卷
+docker export dataContainer > dataContainer.tar    //移动数据容器到其它节点时，使用导出命令
+docker import dataContainer.tar    //在另一个节点上使用导入命令
+
+
+08###使用Links在容器之间创建网络 (例：https://www.jianshu.com/p/13752117ff97)
+
+docker run -d --name redis-server redis    //创建名字为redis-server的容器
+docker run --link redis-server:redis alpine env    //--link链接redis-server容器到当前容器，并将redis-server指定别名为redis；env查看环境变量，包含redis-server和当前容器的
+docker run --link redis-server:redis alpine cat /etc/hosts    //可以看到redis-server 和 redis指向的是同一主机
+docker run --link redis-server:redis alpine ping -c 1 redis    //ping一次redis
+docker run -d -p 3000:3000 --link redis-server:redis katacoda/redis-node-docker-example    //使用nodejs的一个镜像与redis服务器沟通
+curl docker:3000
+
+docker run -ti --link redis-server:redis redis redis-cli -h redis
+KEYS *
+QUIT
+
+09###使用Networks在容器之间创建网络
+
+docker network ls    //列出容器网络
+docker network create backend-network    //创建容器网络，默认是bridge模式
+docker run -d --name=redis --net=backend-network redis    //创建容器时指定网络
+
+docker run --net=backend-network alpine env
+docker run --net=backend-network alpine cat /etc/hosts
+docker run --net=backend-network alpine cat /etc/resolv.conf    //nameserver 是 127。0.0.11
+docker run --net=backend-network alpine ping -c1 redis    //redis的FQDN是 redis.backend-network.
+
+docker network create frontend-network
+docker network connect frontend-network redis    //将容器链接到一个网络
+docker run -d -p 3000:3000 --net=frontend-network katacoda/redis-node-docker-example
+curl docker:3000
+
+docker network create frontend-network2
+docker network connect --alias db frontend-network2 redis    //将容器链接到一个网络，并为redis设置了一个别名为db
+docker run --net=frontend-network2 alpine ping -c1 db    //ping容器的别名db返回IP是redis的地址
+
+docker network inspect frontend-network    //查看网络详情
+docker network disconnect frontend-network redis    //容器从网络断开
+
+10###持久化数据
+
+docker run -v /docker/redis-data:/data --name r1 -d redis redis-server --appendonly yes    //在本地创建/docker/redis-data目录并挂载到容器的/data
+cat data | docker exec -i r1 redis-cli --pipe    //将data文件传输到redis实例
+docker run -v /docker/redis-data:/backup ubuntu ls backup    //用ubuntu容器挂载主机目录/docker/redis-data到容器的/backup下面,以实现数据备份的目的（需要进一步对数据进行备份操作）
+
+docker run --volumes-from r1 -ti ubuntu ls /data    //使用--volumes-from挂载r1容器的卷到ubuntu容器下，这样不用关心r1容器挂载的卷的具体位置
+
+docker run -v /docker/redis-data:/data:ro -ti ubuntu rm -rf /data    //以只读方式挂载
+
+11###管理容器日志文件（例：https://www.cnblogs.com/lkun/p/7927100.html）
+
+docker logs redis-server    //访问日志的标准输出和标准错误
+docker run -d --name redis-syslog --log-driver=syslog redis    //--log-driver=syslog将容器日志写入syslog工具
+docker run -d --name redis-none --log-driver=none redis    //--log-driver=none禁用容器日志输了
+
+docker inspect --format '{{ .HostConfig.LogConfig }}' redis-server    //查看容器的日志配置参数
+docker inspect --format '{{ .HostConfig.LogConfig }}' redis-syslog    //查看容器的日志配置参数
+docker inspect --format '{{ .HostConfig.LogConfig }}' redis-none    //查看容器的日志配置参数
+
+12###使用重启策略策略确保容器正常运行（例：https://blog.csdn.net/taiyangdao/article/details/73076019）
+
+docker run -d --name restart-default scrapbook/docker-restart-example    //使用这个镜像模拟 code 1 容器崩溃
+docker ps -a
+docker logs restart-default    //查看里面的日志，不一定能帮助我们解决问题
+
+docker run -d --name restart-3 --restart=on-failure:3 scrapbook/docker-restart-example    //--restart=on-failure:3如果容器启动失败，将再次重启3次。
+docker logs restart-3    //从日志中可以后到一共启动了4次
+
+docker run -d --name restart-always --restart=always scrapbook/docker-restart-example    //启动失败时一直重启容器
+docker logs restart-always | wc -l
+docker inspect -f '{{ .RestartCount }}' restart-always    //查看容器重启次数
+
+13###添加Metadata和Labels
+
+docker run -l user=12345 -d redis    //为容器定义一下标签
+echo 'user=123461' >> labels && echo 'role=cache' >> labels
+docker run --label-file=labels -d redis    //为容器定义多个标签
+
+LABEL vendor=Katacoda    //可以在Dockerfile中加这行，给镜像加标签，用这个镜像启动的容器将使用此标签
+LABEL vendor=Katacoda \ com.katacoda.version=0.0.5 \ com.katacoda.build-date=2016-07-01T10:47:29Z \ com.katacoda.course=Docker    //多个标签的情况下使用这种方法
+
+docker inspect rd    //查看容器标签
+docker inspect -f "{{ json .Config.Labels }}" rd    //以json格式查看rd容器的标签
+docker inspect -f "{{ json .ContainerConfig.Labels}}" katacoda-label-example
+
+docker ps --filter "label=user=12345"    //通过标签筛容器
+docker images --filter "label=vendor=Katacoda"    //通过标签筛镜像
+
+docker -d -H unix:///var/run/docker.sock --label com.katacoda.environment="production" --label com.katacoda.storage="ssd"    //Daemon标签 
+
+14###容器负载均衡（例：https://blog.csdn.net/zhuxiang203/article/details/40711101）
+
+docker run -d -p 80:80 -e DEFAULT_HOST=proxy.example -v /var/run/docker.sock:/tmp/docker.sock:ro --name nginx jwilder/nginx-proxy    //-v 用来让Nginx-Proxy侦听Docker启动/停止，以自动更新HAPROXY配置
+curl http://docker    //因为现在没有默认主机，所以返回503
+
+docker run -d -p 80 -e VIRTUAL_HOST=proxy.example katacoda/docker-http-server    //创建容器主机名的proxy.example
+curl http://docker    //反回容器的主机名
+
+docker run -d -p 80 -e VIRTUAL_HOST=proxy.example katacoda/docker-http-server    //再次建主机名为proxy.example的容器
+curl http://docker    //多次执行返回不同容器的主机名
+
+docker exec nginx cat /etc/nginx/conf.d/default.conf
+docker logs nginx
+
+15###使用Docker Compose进行编排（再来几遍）
+
+docker-compose.yml
+-------------------------------
+web:
+  build: .
+
+  links:
+    - redis
+
+  ports:
+    - "3000"
+    - "8000"
+
+redis:
+  image: redis:alpine
+  volumes:
+    - /var/redis/data:/data
+--------------------------------
+
+Dockerfile
+----------------------------------------------
+FROM ocelotuproar/alpine-node:5.7.1-onbuild
+EXPOSE 3000
+----------------------------------------------
+
+Makefile
+--------------------------------------------------------
+NAME='scrapbook/redis-node-docker-example'
+
+build:
+	docker build -t $(NAME) .
+
+debug:
+	docker run -it --rm --entrypoint=/bin/bash $(NAME)
+
+run:
+	docker run -it --rm $(NAME)
+
+push:
+	docker push $(NAME)
+--------------------------------------------------------
+
+
+
+16###使用Docker Stats查看开销
+
+docker stats nginx
+docker ps -q | xargs docker stats	//查看多个容器
+
+17###使用Multi-Stage创建优化镜像（例：https://www.jb51.net/article/136260.htm）
+
+git clone https://github.com/katacoda/golang-http-server.git
+cd golang-http-server/
+Dockerfile.multi
+------------------------------------------------------------------------
+# First Stage
+FROM golang:1.6-alpine
+
+RUN mkdir /app
+ADD . /app/
+WORKDIR /app
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+
+# Second Stage
+FROM alpine
+EXPOSE 80
+CMD ["/app"]
+
+# Copy from first stage
+COPY --from=0 /app/main /app	//从第一阶段拷贝文件到当前阶段的/app目录
+------------------------------------------------------------------------
+docker build -f Dockerfile.multi -t golang-app .
+docker images
+docker run -d -p 80:80 golang-app
+curl localhost
+
+18###格式化PS输出
+
+docker run -d redis
+docker ps
+docker ps --format '{{.Names}} container is using {{.Image}} image'
+docker ps --format 'table {{.Names}}\t{{.Image}}'
+docker ps -q | xargs docker inspect --format '{{ .Id }} - {{ .Name }} - {{ .NetworkSettings.IPAddress }}'	//输出容器的IP地址
+
+19###Docker Swarm 
+20###Docker Swarm Mode Playground
+21###Playground
+
+22###Docker和MakeFile
+
+Makefile
+--------------------------------------------------------------------
+build:
+	docker build -t benhall/docker-make-example .	//前面必需是Tab
+--------------------------------------------------------------------
+
+Dockerfile
+--------------
+FROM busybox
+CMD ["date"]
+--------------
+
+make
+docker images
+docker run benhall/docker-make-example
+
+
